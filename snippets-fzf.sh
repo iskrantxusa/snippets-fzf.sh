@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Plain-text command snippets with fzf.
 # Source from bash or zsh:
-#   . /home/user/_ai.snippets/snippets-fzf.sh
+#   . "${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh/snippets-fzf.sh"
 #
 # Optional:
 #   export SNIPPETS_FILE="$HOME/_snippets.txt"
@@ -10,15 +10,22 @@
 #   export SNIPPETS_PASTE_DELAY=0.25
 #   export SNIPPETS_GUI_WAIT_TIMEOUT=300
 #   export SNIPPETS_GUI_SELECTOR=rofi  # rofi, fzf, auto
+#   export SNIPPETS_INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh"
+#   export SNIPPETS_BIN_DIR="$HOME/.local/bin"
 #
 # Interactive zsh/bash shells bind keys automatically by default.
 # To re-bind manually after another plugin changed keys:
 #   snippets_bind_keys
 #
 # Desktop/global hotkey command example:
-#   zsh -lc '. /home/user/_ai.snippets/snippets-fzf.sh; snippets_fzf_gui_insert'
+#   zsh -lc '. "${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh/snippets-fzf.sh"; snippets_fzf_gui_insert'
 
 : "${SNIPPETS_FILE:=$HOME/_snippets.txt}"
+: "${SNIPPETS_INSTALL_URL:=https://github.com/iskrantxusa/snippets-fzf.sh/raw/refs/heads/master/snippets-fzf.sh}"
+: "${SNIPPETS_INSTALL_DIR:=${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh}"
+: "${SNIPPETS_INSTALL_FILE:=$SNIPPETS_INSTALL_DIR/snippets-fzf.sh}"
+: "${SNIPPETS_BIN_DIR:=$HOME/.local/bin}"
+: "${SNIPPETS_BIN_FILE:=$SNIPPETS_BIN_DIR/snippets}"
 
 if [ -n "${ZSH_VERSION-}" ]; then
   : "${SNIPPETS_LIB_FILE:=${${(%):-%x}:A}}"
@@ -365,6 +372,10 @@ snippets__script_path() {
   fi
 
   case "$source_path" in
+    '' | - | bash | sh | zsh) return 1 ;;
+  esac
+
+  case "$source_path" in
     /*) printf '%s\n' "$source_path" ;;
     */*)
       source_dir=${source_path%/*}
@@ -373,6 +384,62 @@ snippets__script_path() {
       ;;
     *) command -v "$source_path" ;;
   esac
+}
+
+snippets__is_local_script_path() {
+  [ -n "${1-}" ] || return 1
+  [ -f "$1" ] || return 1
+  case "$1" in
+    - | bash | sh | zsh) return 1 ;;
+  esac
+}
+
+snippets__shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+snippets__download() {
+  url=$1
+  target=$2
+
+  if snippets__need curl; then
+    curl -fsSL "$url" -o "$target"
+  elif snippets__need wget; then
+    wget -qO "$target" "$url"
+  else
+    printf 'snippets: curl or wget is required for pipe install\n' >&2
+    return 127
+  fi
+}
+
+snippets__install_script_file() {
+  source_path=$1
+
+  mkdir -p "$SNIPPETS_INSTALL_DIR" || return 1
+
+  if snippets__is_local_script_path "$source_path"; then
+    source_path=$(cd "${source_path%/*}" 2>/dev/null && pwd -P)/${source_path##*/}
+    if [ "$source_path" != "$SNIPPETS_INSTALL_FILE" ]; then
+      cp "$source_path" "$SNIPPETS_INSTALL_FILE" || return 1
+    fi
+  else
+    snippets__download "$SNIPPETS_INSTALL_URL" "$SNIPPETS_INSTALL_FILE" || return 1
+  fi
+
+  chmod +x "$SNIPPETS_INSTALL_FILE" || return 1
+  printf 'snippets: installed script at %s\n' "$SNIPPETS_INSTALL_FILE"
+}
+
+snippets__install_bin_wrapper() {
+  quoted_target=$(snippets__shell_quote "$SNIPPETS_INSTALL_FILE")
+
+  mkdir -p "$SNIPPETS_BIN_DIR" || return 1
+  {
+    printf '#!/usr/bin/env sh\n'
+    printf 'exec %s "$@"\n' "$quoted_target"
+  } >"$SNIPPETS_BIN_FILE" || return 1
+  chmod +x "$SNIPPETS_BIN_FILE" || return 1
+  printf 'snippets: installed command at %s\n' "$SNIPPETS_BIN_FILE"
 }
 
 snippets__append_install_block() {
@@ -408,8 +475,10 @@ snippets__zshrc_includes_local() {
 
 snippets_install() {
   script_path=$(snippets__script_path)
-  snippets__append_install_block "$HOME/.zshrc.local" "$script_path" || return 1
-  snippets__append_install_block "$HOME/.bashrc" "$script_path" || return 1
+  snippets__install_script_file "$script_path" || return 1
+  snippets__install_bin_wrapper || return 1
+  snippets__append_install_block "$HOME/.zshrc.local" "$SNIPPETS_INSTALL_FILE" || return 1
+  snippets__append_install_block "$HOME/.bashrc" "$SNIPPETS_INSTALL_FILE" || return 1
 
   if ! snippets__zshrc_includes_local; then
     red=$(printf '\033[31m')
@@ -427,9 +496,14 @@ snippets-fzf.sh - plain-text command snippets for bash/zsh
 Usage:
   snippets-fzf.sh --help
   snippets-fzf.sh --install
+  curl -fsSL https://github.com/iskrantxusa/snippets-fzf.sh/raw/refs/heads/master/snippets-fzf.sh | bash
 
 Source from shell config:
-  . /home/user/_ai.snippets/snippets-fzf.sh
+  . "${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh/snippets-fzf.sh"
+
+Installed CLI:
+  snippets --help
+  snippets --install
 
 Installed interactive bindings:
   Ctrl+R   search shell history + snippets and insert selected command
@@ -443,24 +517,27 @@ Useful functions:
 
 Files and knobs:
   SNIPPETS_FILE=$HOME/_snippets.txt
+  SNIPPETS_INSTALL_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh
+  SNIPPETS_BIN_FILE=$HOME/.local/bin/snippets
   SNIPPETS_GUI_SELECTOR=auto   # auto, rofi, fzf
   SNIPPETS_PASTE_DELAY=0.25
   SNIPPETS_AUTO_BIND=1
 
 Global hotkey command example:
-  zsh -lc '. /home/user/_ai.snippets/snippets-fzf.sh; snippets_fzf_gui_insert'
+  zsh -lc '. "${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh/snippets-fzf.sh"; snippets_fzf_gui_insert'
 EOF
 }
 
 snippets__is_sourced() {
   if [ -n "${BASH_VERSION-}" ]; then
+    [ "${BASH_SOURCE[0]}" = main ] && return 1
     [ "${BASH_SOURCE[0]}" != "$0" ]
     return
   fi
 
   if [ -n "${ZSH_VERSION-}" ]; then
     case "${ZSH_EVAL_CONTEXT-}" in
-      *:file) return 0 ;;
+      *:file | *:file:*) return 0 ;;
     esac
     return 1
   fi
@@ -469,6 +546,12 @@ snippets__is_sourced() {
 }
 
 if ! snippets__is_sourced; then
+  if [ "$#" -eq 0 ] && [ ! -t 0 ] &&
+    ! snippets__is_local_script_path "$(snippets__script_path)"; then
+    snippets_install
+    exit $?
+  fi
+
   case "${1---help}" in
     --install)
       snippets_install

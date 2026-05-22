@@ -35,7 +35,21 @@ Optional paste support for global hotkeys:
 
 ## Installation
 
-Clone the repository:
+Recommended one-line install:
+
+```sh
+curl -fsSL https://github.com/iskrantxusa/snippets-fzf.sh/raw/refs/heads/master/snippets-fzf.sh | bash
+```
+
+This installs:
+
+- sourceable shell integration: `~/.local/share/snippets-fzf.sh/snippets-fzf.sh`
+- CLI wrapper: `~/.local/bin/snippets`
+- shell config blocks in `~/.zshrc.local` and `~/.bashrc`
+
+Make sure `~/.local/bin` is in your `PATH` if you want to run the CLI as `snippets`.
+
+You can also clone the repository manually:
 
 ```sh
 git clone https://github.com/iskrantxusa/snippets-fzf.sh.git ~/.local/share/snippets-fzf.sh
@@ -48,7 +62,7 @@ Run the installer:
 ./snippets-fzf.sh --install
 ```
 
-The installer appends a small source block to:
+The installer copies the script to the install location, creates the `snippets` wrapper, and appends a small source block to:
 
 - `~/.zshrc.local`
 - `~/.bashrc`
@@ -58,7 +72,7 @@ For Zsh it also checks whether `~/.zshrc` includes `~/.zshrc.local`. If not, it 
 Manual installation is also fine:
 
 ```sh
-. ~/.local/share/snippets-fzf.sh/snippets-fzf.sh
+. "${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh/snippets-fzf.sh"
 ```
 
 Put that line near the end of `~/.zshrc.local` or `~/.bashrc`, especially if other shell plugins also bind `Ctrl+R`.
@@ -126,7 +140,7 @@ The GUI picker is meant for a global desktop shortcut. It lets you choose from s
 Command for your window manager or desktop environment:
 
 ```sh
-zsh -lc '. ~/.local/share/snippets-fzf.sh/snippets-fzf.sh; snippets_fzf_gui_insert'
+zsh -lc '. "${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh/snippets-fzf.sh"; snippets_fzf_gui_insert'
 ```
 
 Despite the function name, the GUI picker can use either `rofi` or `fzf`.
@@ -192,7 +206,13 @@ snippets_fzf_gui_insert
 Show script help:
 
 ```sh
-snippets-fzf.sh --help
+snippets --help
+```
+
+Re-run install or update shell integration:
+
+```sh
+snippets --install
 ```
 
 ## Configuration
@@ -200,6 +220,8 @@ snippets-fzf.sh --help
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SNIPPETS_FILE` | `$HOME/_snippets.txt` | Plain-text snippets file |
+| `SNIPPETS_INSTALL_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh` | Where the sourceable script is installed |
+| `SNIPPETS_BIN_FILE` | `$HOME/.local/bin/snippets` | CLI wrapper path |
 | `SNIPPETS_AUTO_BIND` | `1` | Automatically bind keys in interactive shells |
 | `SNIPPETS_GUI_SELECTOR` | `auto` | `auto`, `rofi`, or `fzf` |
 | `SNIPPETS_FZF_GLOBAL_TERMINAL` | auto-detected | Custom terminal command for the fzf GUI fallback |
@@ -212,7 +234,7 @@ Example:
 export SNIPPETS_FILE="$HOME/_config/_snippets.txt"
 export SNIPPETS_GUI_SELECTOR=rofi
 export SNIPPETS_PASTE_DELAY=0.5
-. ~/.local/share/snippets-fzf.sh/snippets-fzf.sh
+. "${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh/snippets-fzf.sh"
 ```
 
 ## Troubleshooting
@@ -251,4 +273,3 @@ This script follows the Unix way:
 - shell functions instead of a daemon
 
 No database, no background service, no custom file format.
-
