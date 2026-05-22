@@ -13,6 +13,7 @@ The idea is deliberately boring: keep useful commands in one text file, sync it 
 - Supports Bash and Zsh from the same script.
 - Provides a GUI picker for global desktop hotkeys.
 - Uses `rofi -dmenu` for GUI selection when available, with a terminal + `fzf` fallback.
+- Can sync `~/_snippets.txt` to SSH hosts.
 - Works well with Git-based syncing because the snippet database is just text.
 
 ## Requirements
@@ -215,6 +216,20 @@ Re-run install or update shell integration:
 snippets --install
 ```
 
+Sync snippets to one SSH host:
+
+```sh
+snippets sync my-server
+```
+
+Sync snippets to every non-wildcard `Host` entry from `~/.ssh/config`:
+
+```sh
+snippets sync
+```
+
+Without a server argument, `sync` asks for confirmation before writing to all hosts. The remote target is always `$HOME/_snippets.txt`, and the file is overwritten.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -222,6 +237,7 @@ snippets --install
 | `SNIPPETS_FILE` | `$HOME/_snippets.txt` | Plain-text snippets file |
 | `SNIPPETS_INSTALL_DIR` | `${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh` | Where the sourceable script is installed |
 | `SNIPPETS_BIN_FILE` | `$HOME/.local/bin/snippets` | CLI wrapper path |
+| `SNIPPETS_SYNC_SERVERS` | unset | Optional whitespace-separated host list for `snippets sync` |
 | `SNIPPETS_AUTO_BIND` | `1` | Automatically bind keys in interactive shells |
 | `SNIPPETS_GUI_SELECTOR` | `auto` | `auto`, `rofi`, or `fzf` |
 | `SNIPPETS_FZF_GLOBAL_TERMINAL` | auto-detected | Custom terminal command for the fzf GUI fallback |

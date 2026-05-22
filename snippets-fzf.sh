@@ -12,6 +12,7 @@
 #   export SNIPPETS_GUI_SELECTOR=rofi  # rofi, fzf, auto
 #   export SNIPPETS_INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh"
 #   export SNIPPETS_BIN_DIR="$HOME/.local/bin"
+#   export SNIPPETS_SYNC_SERVERS="host1 host2"
 #
 # Interactive zsh/bash shells bind keys automatically by default.
 # To re-bind manually after another plugin changed keys:
@@ -122,6 +123,89 @@ snippets_status() {
       printf 'zle_widget=snippets_zle_insert\n' ||
       printf 'zle_widget=missing\n'
   fi
+}
+
+snippets__ssh_hosts() {
+  if [ -n "${SNIPPETS_SYNC_SERVERS-}" ]; then
+    printf '%s\n' $SNIPPETS_SYNC_SERVERS
+    return
+  fi
+
+  [ -r "$HOME/.ssh/config" ] || return 0
+
+  awk '
+    tolower($1) == "host" {
+      for (i = 2; i <= NF; i++) {
+        if ($i ~ /^#/) {
+          break
+        }
+        if ($i !~ /[*?!]/) {
+          print $i
+        }
+      }
+    }
+  ' "$HOME/.ssh/config" | awk '!seen[$0]++'
+}
+
+snippets_sync_one() {
+  server=$1
+
+  snippets__ensure_file || return 1
+  [ -n "$server" ] || {
+    printf 'snippets: missing server\n' >&2
+    return 2
+  }
+
+  printf 'snippets: syncing %s to %s:~/_snippets.txt\n' "$SNIPPETS_FILE" "$server"
+  ssh "$server" 'cat > "$HOME/_snippets.txt"' <"$SNIPPETS_FILE"
+}
+
+snippets_sync() {
+  snippets__ensure_file || return 1
+  snippets__need ssh || {
+    printf 'snippets: ssh not found\n' >&2
+    return 127
+  }
+
+  if [ "$#" -gt 1 ]; then
+    printf 'snippets: usage: snippets sync [server]\n' >&2
+    return 2
+  fi
+
+  if [ "$#" -eq 1 ]; then
+    snippets_sync_one "$1"
+    return
+  fi
+
+  servers=$(snippets__ssh_hosts)
+  if [ -z "$servers" ]; then
+    printf 'snippets: no SSH hosts found in ~/.ssh/config\n' >&2
+    printf 'snippets: set SNIPPETS_SYNC_SERVERS="host1 host2" or run snippets sync <server>\n' >&2
+    return 1
+  fi
+
+  printf 'Are you sure you want to sync your snippets to all SSH hosts available from ~/.ssh/config? [y/N] ' >&2
+  read -r answer
+  case "$answer" in
+    y | Y | yes | YES)
+      ;;
+    *)
+      printf 'snippets: sync cancelled\n' >&2
+      return 1
+      ;;
+  esac
+
+  failed=0
+  for server in $servers; do
+    snippets_sync_one "$server" || failed=$((failed + 1))
+  done
+
+  if [ "$failed" -gt 0 ]; then
+    printf 'snippets: sync finished with %s failure(s)\n' "$failed" >&2
+    return 1
+  fi
+
+  printf 'snippets: sync finished\n'
 }
 
 snippets_save_from_history() {
@@ -496,6 +580,7 @@ snippets-fzf.sh - plain-text command snippets for bash/zsh
 Usage:
   snippets-fzf.sh --help
   snippets-fzf.sh --install
+  snippets sync [server]
   curl -fsSL https://github.com/iskrantxusa/snippets-fzf.sh/raw/refs/heads/master/snippets-fzf.sh | bash
 
 Source from shell config:
@@ -504,6 +589,7 @@ Source from shell config:
 Installed CLI:
   snippets --help
   snippets --install
+  snippets sync [server]
 
 Installed interactive bindings:
   Ctrl+R   search shell history + snippets and insert selected command
@@ -514,11 +600,13 @@ Useful functions:
   snippets_add <command>
   snippets_save_from_history
   snippets_fzf_gui_insert
+  snippets_sync [server]
 
 Files and knobs:
   SNIPPETS_FILE=$HOME/_snippets.txt
   SNIPPETS_INSTALL_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh
   SNIPPETS_BIN_FILE=$HOME/.local/bin/snippets
+  SNIPPETS_SYNC_SERVERS="host1 host2"
   SNIPPETS_GUI_SELECTOR=auto   # auto, rofi, fzf
   SNIPPETS_PASTE_DELAY=0.25
   SNIPPETS_AUTO_BIND=1
@@ -555,6 +643,10 @@ if ! snippets__is_sourced; then
   case "${1---help}" in
     --install)
       snippets_install
+      ;;
+    sync)
+      shift
+      snippets_sync "$@"
       ;;
     --help | -h | help)
       snippets_help
