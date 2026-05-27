@@ -222,7 +222,7 @@ snippets_save_from_history() {
     printf 'snippets: already saved: %s\n' "$selected" >&2
   else
     printf '%s\n' "$selected" >>"$SNIPPETS_FILE"
-    printf 'snippets: saved: %s\n' "$selected" >&2
+    printf '\033[32m[OK]\033[0m snippets: saved: %s\n' "$selected" >&2
   fi
 }
 

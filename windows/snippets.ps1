@@ -106,7 +106,8 @@ function Add-Snippet {
     }
 
     Add-Content -LiteralPath $script:SnippetsFile -Value $Text
-    Write-Host "snippets: saved: $Text"
+    Write-Host '[OK]' -ForegroundColor Green -NoNewline
+    Write-Host " snippets: saved: $Text"
 }
 
 function Set-SnippetsBindings {
