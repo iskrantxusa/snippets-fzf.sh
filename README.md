@@ -289,3 +289,79 @@ This script follows the Unix way:
 - shell functions instead of a daemon
 
 No database, no background service, no custom file format.
+
+## Windows (PowerShell)
+
+Windows support lives in [`windows/snippets.ps1`](windows/snippets.ps1) and [`windows/snippets.ahk`](windows/snippets.ahk). It uses the same plain-text snippets format and the same default file name:
+
+```powershell
+$HOME\_snippets.txt
+```
+
+Requirements:
+
+- PowerShell with `PSReadLine`
+- `fzf.exe`
+- OpenSSH `ssh.exe` for `sync`
+- AutoHotkey v2 for the optional global GUI hotkey
+
+Install from a cloned repository:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+.\windows\snippets.ps1 install
+```
+
+This installs:
+
+- the PowerShell integration into `%LOCALAPPDATA%\snippets-fzf\snippets.ps1`
+- the optional AutoHotkey script into `%LOCALAPPDATA%\snippets-fzf\snippets.ahk`
+- a CLI wrapper into `$HOME\.local\bin\snippets.ps1`
+- a dot-source block in the current user's all-hosts PowerShell profile
+
+Add `$HOME\.local\bin` to `PATH`, reopen PowerShell, then use:
+
+```powershell
+snippets help
+snippets sync my-linux-server
+snippets sync
+```
+
+PowerShell key bindings:
+
+| Binding | Action |
+| --- | --- |
+| `Ctrl+R` | Search PowerShell history and snippets with `fzf.exe`, then replace the current command line |
+| `Alt+S` | Pick a PowerShell history entry and append it to the snippets file |
+
+### Windows Global Picker
+
+Run the installed `snippets.ahk` file with AutoHotkey v2:
+
+```powershell
+& "$env:LOCALAPPDATA\snippets-fzf\snippets.ahk"
+```
+
+Its default global hotkey is `Ctrl+I`. It opens `fzf.exe`, copies the selected history/snippet line to the Windows clipboard, restores the previous window, and sends `Ctrl+V`.
+
+To use another chord, edit the `^i::` binding in `snippets.ahk` using AutoHotkey v2 hotkey syntax.
+
+### Windows Sync
+
+The Windows implementation syncs to Linux SSH hosts, overwriting remote `$HOME/_snippets.txt`:
+
+```powershell
+snippets sync host-name
+```
+
+With no host argument, it reads non-wildcard `Host` entries from `$HOME\.ssh\config` and asks for confirmation before writing to all of them:
+
+```powershell
+snippets sync
+```
+
+An explicit server list can be configured with:
+
+```powershell
+$env:SNIPPETS_SYNC_SERVERS = 'host1 host2'
+```
