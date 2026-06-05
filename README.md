@@ -228,7 +228,7 @@ Sync snippets to every non-wildcard `Host` entry from `~/.ssh/config`:
 snippets sync
 ```
 
-Without a server argument, `sync` asks for confirmation before writing to all hosts. The remote target is always `$HOME/_snippets.txt`, and the file is overwritten.
+`sync` merges local and remote files by exact line. Local order wins; remote-only lines are appended. The merged file is written back to both sides. Without a server argument, `sync` asks for confirmation before syncing all hosts.
 
 ## Configuration
 
@@ -348,13 +348,13 @@ To use another chord, edit the `^i::` binding in `snippets.ahk` using AutoHotkey
 
 ### Windows Sync
 
-The Windows implementation syncs to Linux SSH hosts, overwriting remote `$HOME/_snippets.txt`:
+The Windows implementation syncs with Linux SSH hosts by merging local `$HOME\_snippets.txt` and remote `$HOME/_snippets.txt`:
 
 ```powershell
 snippets sync host-name
 ```
 
-With no host argument, it reads non-wildcard `Host` entries from `$HOME\.ssh\config` and asks for confirmation before writing to all of them:
+With no host argument, it reads non-wildcard `Host` entries from `$HOME\.ssh\config` and asks for confirmation before syncing all of them:
 
 ```powershell
 snippets sync

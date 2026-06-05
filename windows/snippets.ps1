@@ -220,23 +220,71 @@ function Sync-SnippetsOne {
         throw 'snippets: ssh is not installed or is not in PATH.'
     }
 
-    Write-Host "snippets: syncing $script:SnippetsFile to ${Server}:~/_snippets.txt"
+    Write-Host "snippets: merging $script:SnippetsFile with ${Server}:~/_snippets.txt"
+    $remoteText = Invoke-SnippetsSsh -Server $Server -RemoteCommand 'cat "$HOME/_snippets.txt" 2>/dev/null || true' -CaptureOutput
+    $localLines = Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue
+    $remoteLines = if ($remoteText) { $remoteText -split "`r?`n" } else { @() }
+    $mergedLines = Select-UniqueLines @($localLines + $remoteLines)
+    Set-Content -LiteralPath $script:SnippetsFile -Value $mergedLines -Encoding UTF8
+    $mergedText = if ($mergedLines.Count -gt 0) {
+        ($mergedLines -join [Environment]::NewLine) + [Environment]::NewLine
+    } else {
+        ''
+    }
+    Push-SnippetsOne -Server $Server -Text $mergedText
+}
+
+function Push-SnippetsOne {
+    param(
+        [Parameter(Mandatory = $true)][string] $Server,
+        [AllowNull()][string] $Text = $null
+    )
+
+    if ($null -eq $Text) {
+        $lines = Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue
+        $Text = if ($lines.Count -gt 0) {
+            ($lines -join [Environment]::NewLine) + [Environment]::NewLine
+        } else {
+            ''
+        }
+    }
+
+    Invoke-SnippetsSsh -Server $Server -RemoteCommand 'cat > "$HOME/_snippets.txt"' -InputText $Text | Out-Null
+}
+
+function Invoke-SnippetsSsh {
+    param(
+        [Parameter(Mandatory = $true)][string] $Server,
+        [Parameter(Mandatory = $true)][string] $RemoteCommand,
+        [string] $InputText,
+        [switch] $CaptureOutput
+    )
+
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = 'ssh'
-    $startInfo.Arguments = ('"{0}" "cat > $HOME/_snippets.txt"' -f $Server)
+    $startInfo.Arguments = ('"{0}" "{1}"' -f $Server, ($RemoteCommand.Replace('"', '\"')))
     $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardInput = $null -ne $InputText
+    $startInfo.RedirectStandardOutput = [bool] $CaptureOutput
+    $startInfo.RedirectStandardError = [bool] $CaptureOutput
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
     [void] $process.Start()
-    $bytes = [System.IO.File]::ReadAllBytes($script:SnippetsFile)
-    $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-    $process.StandardInput.Close()
+    if ($null -ne $InputText) {
+        $process.StandardInput.Write($InputText)
+        $process.StandardInput.Close()
+    }
+    $stdout = if ($CaptureOutput) { $process.StandardOutput.ReadToEnd() } else { $null }
+    $stderr = if ($CaptureOutput) { $process.StandardError.ReadToEnd() } else { $null }
     $process.WaitForExit()
     if ($process.ExitCode -ne 0) {
-        throw "snippets: sync failed for $Server with exit code $($process.ExitCode)."
+        if ($stderr) {
+            Write-Error $stderr
+        }
+        throw "snippets: ssh failed for $Server with exit code $($process.ExitCode)."
     }
+    $stdout
 }
 
 function Sync-Snippets {
@@ -260,6 +308,15 @@ function Sync-Snippets {
 
     foreach ($item in $servers) {
         Sync-SnippetsOne -Server $item
+    }
+    $mergedLines = Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue
+    $mergedText = if ($mergedLines.Count -gt 0) {
+        ($mergedLines -join [Environment]::NewLine) + [Environment]::NewLine
+    } else {
+        ''
+    }
+    foreach ($item in $servers) {
+        Push-SnippetsOne -Server $item -Text $mergedText
     }
     Write-Host 'snippets: sync finished.'
 }

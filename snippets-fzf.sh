@@ -149,6 +149,8 @@ snippets__ssh_hosts() {
 
 snippets_sync_one() {
   server=$1
+  tmp=${TMPDIR:-/tmp}/snippets-sync.$$
+  remote_tmp=${TMPDIR:-/tmp}/snippets-sync-remote.$$
 
   snippets__ensure_file || return 1
   [ -n "$server" ] || {
@@ -156,8 +158,35 @@ snippets_sync_one() {
     return 2
   }
 
-  printf 'snippets: syncing %s to %s:~/_snippets.txt\n' "$SNIPPETS_FILE" "$server"
-  ssh "$server" 'cat > "$HOME/_snippets.txt"' <"$SNIPPETS_FILE"
+  printf 'snippets: merging %s with %s:~/_snippets.txt\n' "$SNIPPETS_FILE" "$server"
+  if ! ssh "$server" 'cat "$HOME/_snippets.txt" 2>/dev/null || true' >"$remote_tmp"; then
+    rm -f "$tmp" "$remote_tmp"
+    return 1
+  fi
+
+  awk '!seen[$0]++' "$SNIPPETS_FILE" "$remote_tmp" >"$tmp" || {
+    rm -f "$tmp" "$remote_tmp"
+    return 1
+  }
+
+  cat "$tmp" >"$SNIPPETS_FILE" || {
+    rm -f "$tmp" "$remote_tmp"
+    return 1
+  }
+
+  if ! snippets_sync_push_one "$server" "$tmp"; then
+    rm -f "$tmp" "$remote_tmp"
+    return 1
+  fi
+
+  rm -f "$tmp" "$remote_tmp"
+}
+
+snippets_sync_push_one() {
+  server=$1
+  file=${2:-$SNIPPETS_FILE}
+
+  ssh "$server" 'cat > "$HOME/_snippets.txt"' <"$file"
 }
 
 snippets_sync() {
@@ -198,6 +227,9 @@ snippets_sync() {
   failed=0
   for server in $servers; do
     snippets_sync_one "$server" || failed=$((failed + 1))
+  done
+  for server in $servers; do
+    snippets_sync_push_one "$server" || failed=$((failed + 1))
   done
 
   if [ "$failed" -gt 0 ]; then
