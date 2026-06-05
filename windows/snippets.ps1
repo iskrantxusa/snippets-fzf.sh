@@ -135,6 +135,53 @@ function Set-SnippetsBindings {
     }
 }
 
+function Register-SnippetsCompleters {
+    if (-not (Get-Command Register-ArgumentCompleter -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    $getCandidates = {
+        param($wordToComplete, $commandAst)
+        $words = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text.Trim('"', "'") })
+        $firstArg = if ($words.Count -ge 2) { $words[1] } else { '' }
+        if ($firstArg -eq 'sync') {
+            @(Get-SnippetsSshHosts)
+        } else {
+            @('sync', 'help', 'install', '--help', '-h')
+        }
+    }
+
+    $emitResults = {
+        param($candidates, $wordToComplete)
+
+        foreach ($candidate in $candidates) {
+            if ($candidate -like "$wordToComplete*") {
+                [System.Management.Automation.CompletionResult]::new(
+                    $candidate,
+                    $candidate,
+                    [System.Management.Automation.CompletionResultType]::ParameterValue,
+                    $candidate
+                )
+            }
+        }
+    }
+
+    $completer = {
+        param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+        $candidates = & $getCandidates $wordToComplete $commandAst
+        & $emitResults $candidates $wordToComplete
+    }.GetNewClosure()
+
+    $nativeCompleter = {
+        param($wordToComplete, $commandAst, $cursorPosition)
+        $candidates = & $getCandidates $wordToComplete $commandAst
+        & $emitResults $candidates $wordToComplete
+    }.GetNewClosure()
+
+    Register-ArgumentCompleter -CommandName snippets, snippets.ps1 -ScriptBlock $completer
+    Register-ArgumentCompleter -Native -CommandName snippets, snippets.ps1 -ScriptBlock $nativeCompleter
+}
+
 function Install-Snippets {
     if (-not $PSCommandPath) {
         throw 'snippets: install must be run from windows/snippets.ps1 on disk.'
@@ -349,6 +396,7 @@ Usage:
 PowerShell bindings after install/profile reload:
   Ctrl+R   search PowerShell history + snippets with fzf
   Alt+S    save a selected PowerShell history command
+  TAB      complete snippets CLI commands and sync hosts
 
 Global Windows hotkey:
   Run the installed snippets.ahk with AutoHotkey v2; Ctrl+I opens fzf and
@@ -356,6 +404,7 @@ Global Windows hotkey:
 
 Files:
   SNIPPETS_FILE defaults to $HOME\_snippets.txt
+  SNIPPETS_AUTO_COMPLETE=0 disables snippets CLI completion
   Installed code is stored in %LOCALAPPDATA%\snippets-fzf
   CLI wrapper is stored in $HOME\.local\bin\snippets.ps1
 '@ | Write-Output
@@ -363,6 +412,9 @@ Files:
 
 if ($MyInvocation.InvocationName -eq '.') {
     Set-SnippetsBindings
+    if ($env:SNIPPETS_AUTO_COMPLETE -notin @('0', 'false', 'FALSE', 'no', 'NO')) {
+        Register-SnippetsCompleters
+    }
     return
 }
 

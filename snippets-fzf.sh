@@ -13,6 +13,7 @@
 #   export SNIPPETS_INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh"
 #   export SNIPPETS_BIN_DIR="$HOME/.local/bin"
 #   export SNIPPETS_SYNC_SERVERS="host1 host2"
+#   export SNIPPETS_AUTO_COMPLETE=0
 #
 # Interactive zsh/bash shells bind keys automatically by default.
 # To re-bind manually after another plugin changed keys:
@@ -258,6 +259,56 @@ snippets_save_from_history() {
   fi
 }
 
+snippets_bash_complete() {
+  local cur prev commands hosts
+
+  COMPREPLY=()
+  cur=${COMP_WORDS[COMP_CWORD]}
+  prev=${COMP_WORDS[COMP_CWORD - 1]}
+  commands='sync help --help -h --install'
+
+  case "$prev" in
+    sync)
+      hosts=$(snippets__ssh_hosts)
+      mapfile -t COMPREPLY < <(compgen -W "$hosts" -- "$cur")
+      ;;
+    snippets)
+      mapfile -t COMPREPLY < <(compgen -W "$commands" -- "$cur")
+      ;;
+  esac
+}
+
+snippets_zsh_complete() {
+  local -a commands hosts
+
+  commands=(sync help --help -h --install)
+  if (( CURRENT == 2 )); then
+    _describe 'snippets command' commands
+  elif [[ ${words[2]} == sync ]]; then
+    hosts=(${(f)"$(snippets__ssh_hosts)"})
+    _describe 'ssh host' hosts
+  fi
+}
+
+snippets_register_completion() {
+  case "${SNIPPETS_AUTO_COMPLETE:-1}" in
+    0 | false | FALSE | no | NO)
+      if [ -n "${BASH_VERSION-}" ]; then
+        complete -r snippets 2>/dev/null || true
+      fi
+      return
+      ;;
+  esac
+
+  if [ -n "${BASH_VERSION-}" ]; then
+    complete -F snippets_bash_complete snippets 2>/dev/null || true
+  elif [ -n "${ZSH_VERSION-}" ]; then
+    if command -v compdef >/dev/null 2>&1; then
+      compdef snippets_zsh_complete snippets 2>/dev/null || true
+    fi
+  fi
+}
+
 snippets_fzf_gui_select() {
   snippets__need fzf || {
     printf 'snippets: fzf not found\n' >&2
@@ -457,6 +508,9 @@ if [ -n "${ZSH_VERSION-}" ]; then
   if [[ -o interactive && "${SNIPPETS_AUTO_BIND:-1}" != 0 ]]; then
     snippets_bind_keys
   fi
+  if [[ -o interactive ]]; then
+    snippets_register_completion
+  fi
 elif [ -n "${BASH_VERSION-}" ]; then
   snippets_bash_insert() {
     local selected
@@ -475,6 +529,7 @@ elif [ -n "${BASH_VERSION-}" ]; then
       if [ "${SNIPPETS_AUTO_BIND:-1}" != 0 ]; then
         snippets_bind_keys
       fi
+      snippets_register_completion
       ;;
   esac
 fi
@@ -639,6 +694,7 @@ Files and knobs:
   SNIPPETS_INSTALL_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/snippets-fzf.sh
   SNIPPETS_BIN_FILE=$HOME/.local/bin/snippets
   SNIPPETS_SYNC_SERVERS="host1 host2"
+  SNIPPETS_AUTO_COMPLETE=1
   SNIPPETS_GUI_SELECTOR=auto   # auto, rofi, fzf
   SNIPPETS_PASTE_DELAY=0.25
   SNIPPETS_AUTO_BIND=1

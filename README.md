@@ -134,6 +134,23 @@ export SNIPPETS_AUTO_BIND=0
 
 Then bind manually with your own shell setup.
 
+## TAB Completion
+
+When the script is sourced in Bash or Zsh, it registers completion only for the `snippets` CLI command. It does not change global TAB behavior and does not affect existing completion for tools like `git`, `docker`, or `kubectl`.
+
+```sh
+snippets <TAB>
+snippets sync <TAB>
+```
+
+Top-level completion suggests `sync`, `help`, `--help`, `-h`, and `--install`. After `snippets sync`, completion suggests SSH hosts from `~/.ssh/config` or `SNIPPETS_SYNC_SERVERS`.
+
+To disable automatic completion registration:
+
+```sh
+export SNIPPETS_AUTO_COMPLETE=0
+```
+
 ## GUI Picker
 
 The GUI picker is meant for a global desktop shortcut. It lets you choose from snippets and history outside the terminal and paste the selected command into the currently focused window.
@@ -239,6 +256,7 @@ snippets sync
 | `SNIPPETS_BIN_FILE` | `$HOME/.local/bin/snippets` | CLI wrapper path |
 | `SNIPPETS_SYNC_SERVERS` | unset | Optional whitespace-separated host list for `snippets sync` |
 | `SNIPPETS_AUTO_BIND` | `1` | Automatically bind keys in interactive shells |
+| `SNIPPETS_AUTO_COMPLETE` | `1` | Automatically register completion for the `snippets` CLI |
 | `SNIPPETS_GUI_SELECTOR` | `auto` | `auto`, `rofi`, or `fzf` |
 | `SNIPPETS_FZF_GLOBAL_TERMINAL` | auto-detected | Custom terminal command for the fzf GUI fallback |
 | `SNIPPETS_PASTE_DELAY` | `0.25` | Delay before sending paste keystroke |
@@ -333,6 +351,8 @@ PowerShell key bindings:
 | --- | --- |
 | `Ctrl+R` | Search PowerShell history and snippets with `fzf.exe`, then replace the current command line |
 | `Alt+S` | Pick a PowerShell history entry and append it to the snippets file |
+
+PowerShell also registers argument completion for `snippets` and `snippets.ps1` when the installed script is dot-sourced from your profile. It completes top-level commands/options and SSH hosts after `snippets sync`. Set `SNIPPETS_AUTO_COMPLETE=0` to disable it.
 
 ### Windows Global Picker
 
