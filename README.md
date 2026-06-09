@@ -4,6 +4,8 @@ Plain-text command snippets for Bash and Zsh, searchable with `fzf`, `rofi`, and
 
 The idea is deliberately boring: keep useful commands in one text file, sync it with Git or your dotfiles, and make those commands available from the terminal and from a global desktop hotkey.
 
+![Certified works on my machine](worksonmymachine.png)
+
 ## Features
 
 - Stores snippets in a plain text file: `~/_snippets.txt` by default.
