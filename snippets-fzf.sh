@@ -46,13 +46,101 @@ snippets__ensure_file() {
   [ -e "$SNIPPETS_FILE" ] || : >"$SNIPPETS_FILE"
 }
 
-snippets__print_snippets() {
+snippets__sha256() {
+  if snippets__need sha256sum; then
+    printf '%s' "$1" | sha256sum | awk '{ print $1 }'
+  elif snippets__need shasum; then
+    printf '%s' "$1" | shasum -a 256 | awk '{ print $1 }'
+  elif snippets__need openssl; then
+    printf '%s' "$1" | openssl dgst -sha256 -r | awk '{ print $1 }'
+  else
+    printf 'snippets: sha256sum, shasum, or openssl is required\n' >&2
+    return 127
+  fi
+}
+
+snippets__deleted_record() {
+  hash=$(snippets__sha256 "$1") || return 1
+  printf 'DELETED:sha256(%s)\n' "$hash"
+}
+
+snippets__is_deleted_record() {
+  printf '%s\n' "$1" | grep -Eq '^DELETED:sha256\([0-9a-fA-F]{64}\)$'
+}
+
+snippets__deleted_hashes() {
   snippets__ensure_file || return 1
   awk '
-    /^[[:space:]]*$/ { next }
-    /^[[:space:]]*#/ { next }
-    { print }
+    /^DELETED:sha256\([0-9a-fA-F]{64}\)$/ {
+      value = $0
+      sub(/^DELETED:sha256\(/, "", value)
+      sub(/\)$/, "", value)
+      print tolower(value)
+    }
   ' "$SNIPPETS_FILE"
+}
+
+snippets__is_tombstoned_text() {
+  hash=$(snippets__sha256 "$1") || return 1
+  snippets__deleted_hashes | grep -Fxiq -- "$hash"
+}
+
+snippets__normalize_files() {
+  tomb=${TMPDIR:-/tmp}/snippets-tomb.$$
+  unique=${TMPDIR:-/tmp}/snippets-unique.$$
+
+  awk '
+    /^DELETED:sha256\([0-9a-fA-F]{64}\)$/ {
+      value = $0
+      sub(/^DELETED:sha256\(/, "", value)
+      sub(/\)$/, "", value)
+      print tolower(value)
+    }
+  ' "$@" | awk '!seen[$0]++' >"$tomb" || {
+    rm -f "$tomb" "$unique"
+    return 1
+  }
+
+  awk '!seen[$0]++' "$@" >"$unique" || {
+    rm -f "$tomb" "$unique"
+    return 1
+  }
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    if snippets__is_deleted_record "$line"; then
+      hash=${line#DELETED:sha256(}
+      hash=${hash%)}
+      hash=$(printf '%s' "$hash" | tr '[:upper:]' '[:lower:]')
+      printf 'DELETED:sha256(%s)\n' "$hash"
+      continue
+    fi
+
+    case "$line" in
+      '' | \#*) printf '%s\n' "$line"; continue ;;
+    esac
+
+    hash=$(snippets__sha256 "$line") || {
+      rm -f "$tomb" "$unique"
+      return 1
+    }
+    if grep -Fxiq -- "$hash" "$tomb"; then
+      continue
+    fi
+    printf '%s\n' "$line"
+  done <"$unique" | awk '!seen[$0]++'
+
+  rm -f "$tomb" "$unique"
+}
+
+snippets__print_snippets() {
+  snippets__ensure_file || return 1
+  snippets__normalize_files "$SNIPPETS_FILE" |
+    awk '
+      /^[[:space:]]*$/ { next }
+      /^[[:space:]]*#/ { next }
+      /^DELETED:sha256\([0-9a-fA-F]{64}\)$/ { next }
+      { print }
+    '
 }
 
 snippets__print_history() {
@@ -111,6 +199,10 @@ snippets__choose_history() {
 snippets_add() {
   snippets__ensure_file || return 1
   [ "$#" -gt 0 ] || return 1
+  if snippets__is_tombstoned_text "$*"; then
+    printf 'snippets: deleted tombstone exists, refusing to re-add: %s\n' "$*" >&2
+    return 1
+  fi
   printf '%s\n' "$*" >>"$SNIPPETS_FILE"
 }
 
@@ -165,7 +257,7 @@ snippets_sync_one() {
     return 1
   fi
 
-  awk '!seen[$0]++' "$SNIPPETS_FILE" "$remote_tmp" >"$tmp" || {
+  snippets__normalize_files "$SNIPPETS_FILE" "$remote_tmp" >"$tmp" || {
     rm -f "$tmp" "$remote_tmp"
     return 1
   }
@@ -253,10 +345,56 @@ snippets_save_from_history() {
   snippets__ensure_file || return 1
   if grep -Fxq -- "$selected" "$SNIPPETS_FILE" 2>/dev/null; then
     printf 'snippets: already saved: %s\n' "$selected" >&2
+  elif snippets__is_tombstoned_text "$selected"; then
+    printf 'snippets: deleted tombstone exists, refusing to save: %s\n' "$selected" >&2
+    return 1
   else
     printf '%s\n' "$selected" >>"$SNIPPETS_FILE"
     printf '\033[32m[OK]\033[0m snippets: saved: %s\n' "$selected" >&2
   fi
+}
+
+snippets_delete() {
+  snippets__need fzf || {
+    printf 'snippets: fzf not found\n' >&2
+    return 127
+  }
+
+  selected=$(snippets__print_snippets | fzf --tac --tiebreak=index --prompt='delete> ' +m) || return
+  [ -n "$selected" ] || return
+
+  record=$(snippets__deleted_record "$selected") || return 1
+  if ! grep -Fxqi -- "$record" "$SNIPPETS_FILE" 2>/dev/null; then
+    printf '%s\n' "$record" >>"$SNIPPETS_FILE"
+  fi
+
+  tmp=${TMPDIR:-/tmp}/snippets-delete.$$
+  snippets__normalize_files "$SNIPPETS_FILE" >"$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  cat "$tmp" >"$SNIPPETS_FILE"
+  rm -f "$tmp"
+  printf '\033[32m[OK]\033[0m snippets: deleted: %s\n' "$selected" >&2
+}
+
+snippets_prune_deleted() {
+  snippets__ensure_file || return 1
+  printf 'Are you sure you want to remove local DELETED tombstones? [y/N] ' >&2
+  read -r answer
+  case "$answer" in
+    y | Y | yes | YES) ;;
+    *)
+      printf 'snippets: prune cancelled\n' >&2
+      return 1
+      ;;
+  esac
+
+  tmp=${TMPDIR:-/tmp}/snippets-prune.$$
+  grep -Evi '^DELETED:sha256\([0-9a-f]{64}\)$' "$SNIPPETS_FILE" >"$tmp" || true
+  cat "$tmp" >"$SNIPPETS_FILE"
+  rm -f "$tmp"
+  printf '\033[32m[OK]\033[0m snippets: pruned deleted tombstones\n' >&2
 }
 
 snippets_bash_complete() {
@@ -265,7 +403,7 @@ snippets_bash_complete() {
   COMPREPLY=()
   cur=${COMP_WORDS[COMP_CWORD]}
   prev=${COMP_WORDS[COMP_CWORD - 1]}
-  commands='sync help --help -h --install'
+  commands='sync delete prune-deleted help --help -h --install'
 
   case "$prev" in
     sync)
@@ -281,7 +419,7 @@ snippets_bash_complete() {
 snippets_zsh_complete() {
   local -a commands hosts
 
-  commands=(sync help --help -h --install)
+  commands=(sync delete prune-deleted help --help -h --install)
   if (( CURRENT == 2 )); then
     _describe 'snippets command' commands
   elif [[ ${words[2]} == sync ]]; then
@@ -668,6 +806,8 @@ Usage:
   snippets-fzf.sh --help
   snippets-fzf.sh --install
   snippets sync [server]
+  snippets delete
+  snippets prune-deleted
   curl -fsSL https://github.com/iskrantxusa/snippets-fzf.sh/raw/refs/heads/master/snippets-fzf.sh | bash
 
 Source from shell config:
@@ -677,6 +817,8 @@ Installed CLI:
   snippets --help
   snippets --install
   snippets sync [server]
+  snippets delete
+  snippets prune-deleted
 
 Installed interactive bindings:
   Ctrl+R   search shell history + snippets and insert selected command
@@ -688,6 +830,8 @@ Useful functions:
   snippets_save_from_history
   snippets_fzf_gui_insert
   snippets_sync [server]
+  snippets_delete
+  snippets_prune_deleted
 
 Files and knobs:
   SNIPPETS_FILE=$HOME/_snippets.txt
@@ -735,6 +879,14 @@ if ! snippets__is_sourced; then
     sync)
       shift
       snippets_sync "$@"
+      ;;
+    delete)
+      shift
+      snippets_delete "$@"
+      ;;
+    prune-deleted)
+      shift
+      snippets_prune_deleted "$@"
       ;;
     --help | -h | help)
       snippets_help

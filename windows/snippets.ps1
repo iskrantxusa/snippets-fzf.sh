@@ -36,8 +36,8 @@ function Initialize-SnippetsFile {
 
 function Get-SnippetLines {
     Initialize-SnippetsFile
-    Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue |
-        Where-Object { $_ -notmatch '^\s*$' -and $_ -notmatch '^\s*#' }
+    ConvertTo-NormalizedSnippetLines -Lines (Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue) |
+        Where-Object { $_ -notmatch '^\s*$' -and $_ -notmatch '^\s*#' -and $_ -notmatch '^DELETED:sha256\([0-9a-fA-F]{64}\)$' }
 }
 
 function Get-SnippetsHistoryLines {
@@ -65,6 +65,84 @@ function Select-UniqueLines {
             $line
         }
     }
+}
+
+function Get-SnippetSha256 {
+    param([Parameter(Mandatory = $true)][string] $Text)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-DeletedRecord {
+    param([Parameter(Mandatory = $true)][string] $Text)
+
+    'DELETED:sha256({0})' -f (Get-SnippetSha256 -Text $Text)
+}
+
+function Get-DeletedHashFromLine {
+    param([string] $Line)
+
+    if ($Line -match '^DELETED:sha256\(([0-9a-fA-F]{64})\)$') {
+        $Matches[1].ToLowerInvariant()
+    }
+}
+
+function ConvertTo-NormalizedSnippetLines {
+    param([AllowNull()][string[]] $Lines)
+
+    $allLines = @($Lines)
+    $deleted = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in $allLines) {
+        $hash = Get-DeletedHashFromLine -Line $line
+        if ($hash) {
+            [void] $deleted.Add($hash)
+        }
+    }
+
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    $seenDeleted = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in $allLines) {
+        $deletedHash = Get-DeletedHashFromLine -Line $line
+        if ($deletedHash) {
+            if ($seenDeleted.Add($deletedHash)) {
+                'DELETED:sha256({0})' -f $deletedHash
+            }
+            continue
+        }
+
+        if (-not $seen.Add($line)) {
+            continue
+        }
+
+        if ($line -match '^\s*$' -or $line -match '^\s*#') {
+            $line
+            continue
+        }
+
+        $hash = Get-SnippetSha256 -Text $line
+        if (-not $deleted.Contains($hash)) {
+            $line
+        }
+    }
+}
+
+function Test-SnippetDeleted {
+    param([Parameter(Mandatory = $true)][string] $Text)
+
+    $hash = Get-SnippetSha256 -Text $Text
+    foreach ($line in (Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue)) {
+        $deletedHash = Get-DeletedHashFromLine -Line $line
+        if ($deletedHash -and $deletedHash -eq $hash) {
+            return $true
+        }
+    }
+    $false
 }
 
 function Invoke-SnippetsFzf {
@@ -104,10 +182,41 @@ function Add-Snippet {
         Write-Host "snippets: already saved: $Text"
         return
     }
+    if (Test-SnippetDeleted -Text $Text) {
+        throw "snippets: deleted tombstone exists, refusing to save: $Text"
+    }
 
     Add-Content -LiteralPath $script:SnippetsFile -Value $Text
     Write-Host '[OK]' -ForegroundColor Green -NoNewline
     Write-Host " snippets: saved: $Text"
+}
+
+function Remove-Snippet {
+    $selected = Invoke-SnippetsFzf -Lines (Get-SnippetLines)
+    if (-not $selected) {
+        return
+    }
+
+    $lines = @((Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue) + (Get-DeletedRecord -Text ([string] $selected)))
+    ConvertTo-NormalizedSnippetLines -Lines $lines |
+        Set-Content -LiteralPath $script:SnippetsFile -Encoding UTF8
+    Write-Host '[OK]' -ForegroundColor Green -NoNewline
+    Write-Host " snippets: deleted: $selected"
+}
+
+function Remove-DeletedTombstones {
+    Initialize-SnippetsFile
+    $answer = Read-Host 'Are you sure you want to remove local DELETED tombstones? [y/N]'
+    if ($answer -notmatch '^(y|yes)$') {
+        Write-Host 'snippets: prune cancelled.'
+        return
+    }
+
+    Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue |
+        Where-Object { $_ -notmatch '^DELETED:sha256\([0-9a-fA-F]{64}\)$' } |
+        Set-Content -LiteralPath $script:SnippetsFile -Encoding UTF8
+    Write-Host '[OK]' -ForegroundColor Green -NoNewline
+    Write-Host ' snippets: pruned deleted tombstones'
 }
 
 function Set-SnippetsBindings {
@@ -147,7 +256,7 @@ function Register-SnippetsCompleters {
         if ($firstArg -eq 'sync') {
             @(Get-SnippetsSshHosts)
         } else {
-            @('sync', 'help', 'install', '--help', '-h')
+            @('sync', 'delete', 'prune-deleted', 'help', 'install', '--help', '-h')
         }
     }
 
@@ -271,7 +380,7 @@ function Sync-SnippetsOne {
     $remoteText = Invoke-SnippetsSsh -Server $Server -RemoteCommand 'cat "$HOME/_snippets.txt" 2>/dev/null || true' -CaptureOutput
     $localLines = Get-Content -LiteralPath $script:SnippetsFile -ErrorAction SilentlyContinue
     $remoteLines = if ($remoteText) { $remoteText -split "`r?`n" } else { @() }
-    $mergedLines = Select-UniqueLines @($localLines + $remoteLines)
+    $mergedLines = @(ConvertTo-NormalizedSnippetLines -Lines @($localLines + $remoteLines))
     Set-Content -LiteralPath $script:SnippetsFile -Value $mergedLines -Encoding UTF8
     $mergedText = if ($mergedLines.Count -gt 0) {
         ($mergedLines -join [Environment]::NewLine) + [Environment]::NewLine
@@ -391,6 +500,8 @@ Usage:
   .\windows\snippets.ps1 install
   snippets pick [output-file]
   snippets sync [server]
+  snippets delete
+  snippets prune-deleted
   snippets help
 
 PowerShell bindings after install/profile reload:
@@ -424,6 +535,8 @@ switch ($Command.ToLowerInvariant()) {
         $outputPath = if ($CommandArguments) { $CommandArguments[0] } else { $null }
         Pick-Snippet -OutputPath $outputPath
     }
+    'delete' { Remove-Snippet }
+    'prune-deleted' { Remove-DeletedTombstones }
     'sync' {
         $server = if ($CommandArguments) { $CommandArguments[0] } else { $null }
         Sync-Snippets -Server $server

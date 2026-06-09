@@ -143,7 +143,7 @@ snippets <TAB>
 snippets sync <TAB>
 ```
 
-Top-level completion suggests `sync`, `help`, `--help`, `-h`, and `--install`. After `snippets sync`, completion suggests SSH hosts from `~/.ssh/config` or `SNIPPETS_SYNC_SERVERS`.
+Top-level completion suggests `sync`, `delete`, `prune-deleted`, `help`, `--help`, `-h`, and `--install`. After `snippets sync`, completion suggests SSH hosts from `~/.ssh/config` or `SNIPPETS_SYNC_SERVERS`.
 
 To disable automatic completion registration:
 
@@ -246,6 +246,22 @@ snippets sync
 ```
 
 `sync` merges local and remote files by exact line. Local order wins; remote-only lines are appended. The merged file is written back to both sides. Without a server argument, `sync` asks for confirmation before syncing all hosts.
+
+Delete a snippet without keeping the deleted command in plaintext:
+
+```sh
+snippets delete
+```
+
+Deletion appends a tombstone record like `DELETED:sha256(<hash>)`, removes the plaintext snippet locally, and propagates the deletion through `sync`. A deleted exact command cannot be re-added while its tombstone exists.
+
+Remove local tombstones only after every machine has synced:
+
+```sh
+snippets prune-deleted
+```
+
+Pruning too early can let an old machine reintroduce a deleted snippet.
 
 ## Configuration
 
@@ -372,6 +388,13 @@ The Windows implementation syncs with Linux SSH hosts by merging local `$HOME\_s
 
 ```powershell
 snippets sync host-name
+```
+
+Deletion uses the same tombstone format as Linux:
+
+```powershell
+snippets delete
+snippets prune-deleted
 ```
 
 With no host argument, it reads non-wildcard `Host` entries from `$HOME\.ssh\config` and asks for confirmation before syncing all of them:
